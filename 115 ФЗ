@@ -1,0 +1,725 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+
+namespace FantasyBattleSOLID
+{
+    // ===== ENUMS =====
+    public enum CharacterStatus
+    {
+        Alive,
+        Unconscious,
+        Poisoned
+    }
+
+    public enum ItemType
+    {
+        Weapon,
+        Potion,
+        Armor
+    }
+
+    public enum BattleEnvironment
+    {
+        Forest,
+        Castle,
+        Desert,
+        Mountains
+    }
+
+    // ===== INTERFACES (ISP) =====
+    public interface ICharacter
+    {
+        int Id { get; }
+        string Name { get; }
+        int Health { get; }
+        int MaxHealth { get; }
+        int Level { get; }
+        CharacterStatus Status { get; }
+        void TakeDamage(int damage);
+        void Heal(int amount);
+    }
+
+    public interface ICombatant : ICharacter
+    {
+        void Attack(ICharacter target);
+        int CalculateDamage();
+    }
+
+    public interface ISpecialAbility
+    {
+        void UseSpecialAbility(ICharacter target);
+        bool CanUseSpecialAbility();
+    }
+
+    public interface IInventory
+    {
+        IReadOnlyList<Item> Inventory { get; }
+        void AddItem(Item item);
+        void RemoveItem(Item item);
+        void UseItem(Item item, ICharacter? target = null);
+    }
+
+    public interface IUsable
+    {
+        void Use(ICharacter user, ICharacter target);
+    }
+
+    public interface IBattlefield
+    {
+        void AddCharacter(ICharacter character);
+        void StartBattle();
+        ICharacter GetRandomTarget(ICharacter exclude);
+    }
+
+    public interface ICharacterFactory
+    {
+        ICharacter CreateWarrior(string name, int level = 1);
+        ICharacter CreateMage(string name, int level = 1);
+        ICharacter CreateArcher(string name, int level = 1);
+    }
+
+    // ===== EXCEPTIONS (SRP) =====
+    public abstract class BattleException : Exception
+    {
+        public abstract string BattleMessage { get; }
+    }
+
+    public class InsufficientResourceException : BattleException
+    {
+        public string ResourceType { get; }
+        public string CharacterName { get; }
+
+        public InsufficientResourceException(string resourceType, string characterName)
+        {
+            ResourceType = resourceType;
+            CharacterName = characterName;
+        }
+
+        public override string BattleMessage =>
+            $"{CharacterName} не может использовать способность: недостаточно {ResourceType}";
+    }
+
+    public class InvalidBattleStateException : BattleException
+    {
+        public override string BattleMessage => "Некорректное состояние битвы";
+    }
+
+    // ===== MODELS =====
+    public record Item(int Id, string Name, ItemType Type, IUsable? Usable = null)
+    {
+        public override string ToString() => $"{Name} ({Type})";
+    }
+
+    // ===== CHARACTER BASE (SRP, OCP) =====
+    public abstract class Character : ICharacter, ICombatant, ISpecialAbility, IInventory
+    {
+        private static int _nextId = 1;
+        private readonly List<Item> _inventory = new();
+
+        public int Id { get; }
+        public string Name { get; }
+        public int Health { get; protected set; }
+        public int MaxHealth { get; protected set; }
+        public int Level { get; }
+        public CharacterStatus Status { get; protected set; }
+        public IReadOnlyList<Item> Inventory => _inventory.AsReadOnly();
+
+        protected Character(string name, int health, int level)
+        {
+            Id = _nextId++;
+            Name = name;
+            Health = health;
+            MaxHealth = health;
+            Level = level;
+            Status = CharacterStatus.Alive;
+        }
+
+        // ICharacter implementation
+        public virtual void TakeDamage(int damage)
+        {
+            Health = Math.Max(0, Health - damage);
+            if (Health == 0)
+            {
+                Status = CharacterStatus.Unconscious;
+            }
+        }
+
+        public virtual void Heal(int amount)
+        {
+            Health = Math.Min(Health + amount, MaxHealth);
+        }
+
+        // ICombatant implementation
+        public virtual void Attack(ICharacter target)
+        {
+            if (Status != CharacterStatus.Alive)
+                throw new InvalidBattleStateException();
+
+            int damage = CalculateDamage();
+            target.TakeDamage(damage);
+        }
+
+        public abstract int CalculateDamage();
+
+        // ISpecialAbility implementation
+        public abstract void UseSpecialAbility(ICharacter target);
+        public abstract bool CanUseSpecialAbility();
+
+        // IInventory implementation
+        public void AddItem(Item item) => _inventory.Add(item);
+
+        public void RemoveItem(Item item) => _inventory.Remove(item);
+
+        public void UseItem(Item item, ICharacter? target = null)
+        {
+            if (item.Usable == null)
+                throw new ArgumentException("Предмет нельзя использовать");
+
+            item.Usable.Use(this, target ?? this);
+            RemoveItem(item);
+        }
+
+        public override string ToString() =>
+            $"{Name} (Ур. {Level}) - {Health}/{MaxHealth} HP - {Status}";
+
+        public override bool Equals(object? obj) =>
+            obj is Character character && Id == character.Id;
+
+        public override int GetHashCode() => Id.GetHashCode();
+    }
+
+    // ===== CONCRETE CHARACTERS (LSP) =====
+    public class Warrior : Character
+    {
+        public int Strength { get; }
+        private int _rage;
+
+        public Warrior(string name, int level = 1) : base(name, 150 + level * 10, level)
+        {
+            Strength = 10 + level * 2;
+            _rage = 0;
+        }
+
+        public override int CalculateDamage()
+        {
+            var rand = new Random();
+            return rand.Next(Strength, Strength + 10) + Level;
+        }
+
+        public override void Attack(ICharacter target)
+        {
+            base.Attack(target);
+            _rage += 10;
+        }
+
+        public override void UseSpecialAbility(ICharacter target)
+        {
+            if (!CanUseSpecialAbility())
+                throw new InsufficientResourceException("ярости", Name);
+
+            int damage = Strength * 2;
+            target.TakeDamage(damage);
+            _rage = 0;
+        }
+
+        public override bool CanUseSpecialAbility() => _rage >= 50;
+
+        public override string ToString() =>
+            base.ToString() + $" - Сила: {Strength} - Ярость: {_rage}";
+    }
+
+    public class Mage : Character
+    {
+        public int Mana { get; private set; }
+        public int MaxMana { get; }
+        public int SpellPower { get; }
+
+        public Mage(string name, int level = 1) : base(name, 80 + level * 5, level)
+        {
+            MaxMana = 100 + level * 10;
+            Mana = MaxMana;
+            SpellPower = 15 + level * 3;
+        }
+
+        public override int CalculateDamage()
+        {
+            var rand = new Random();
+            return rand.Next(SpellPower - 5, SpellPower + 5);
+        }
+
+        public override void Attack(ICharacter target)
+        {
+            if (Mana >= 10)
+            {
+                base.Attack(target);
+                Mana -= 10;
+            }
+            else
+            {
+                throw new InsufficientResourceException("маны", Name);
+            }
+        }
+
+        public override void UseSpecialAbility(ICharacter target)
+        {
+            if (!CanUseSpecialAbility())
+                throw new InsufficientResourceException("маны", Name);
+
+            int damage = SpellPower * 3;
+            target.TakeDamage(damage);
+            Mana -= 30;
+        }
+
+        public override bool CanUseSpecialAbility() => Mana >= 30;
+
+        public void RestoreMana(int amount) => Mana = Math.Min(Mana + amount, MaxMana);
+
+        public override string ToString() =>
+            base.ToString() + $" - Мана: {Mana}/{MaxMana} - Сила заклинаний: {SpellPower}";
+    }
+
+    public class Archer : Character
+    {
+        public int Dexterity { get; }
+        public int ArrowCount { get; private set; }
+
+        public Archer(string name, int level = 1) : base(name, 100 + level * 8, level)
+        {
+            Dexterity = 12 + level * 2;
+            ArrowCount = 20 + level * 5;
+        }
+
+        public override int CalculateDamage()
+        {
+            var rand = new Random();
+            return rand.Next(Dexterity, Dexterity + 15);
+        }
+
+        public override void Attack(ICharacter target)
+        {
+            if (ArrowCount <= 0)
+                throw new InsufficientResourceException("стрел", Name);
+
+            base.Attack(target);
+            ArrowCount--;
+        }
+
+        public override void UseSpecialAbility(ICharacter target)
+        {
+            if (!CanUseSpecialAbility())
+                throw new InsufficientResourceException("стрел", Name);
+
+            int damage = CalculateDamage() * 2;
+            target.TakeDamage(damage);
+            ArrowCount -= 3;
+        }
+
+        public override bool CanUseSpecialAbility() => ArrowCount >= 3;
+
+        public void AddArrows(int count) => ArrowCount += count;
+
+        public override string ToString() =>
+            base.ToString() + $" - Ловкость: {Dexterity} - Стрелы: {ArrowCount}";
+    }
+
+    // ===== ITEMS (SRP) =====
+    public class HealingPotion : IUsable
+    {
+        private readonly IHealthLogger _logger;
+        public int HealAmount { get; }
+
+        public HealingPotion(int healAmount, IHealthLogger logger)
+        {
+            HealAmount = healAmount;
+            _logger = logger;
+        }
+
+        public void Use(ICharacter user, ICharacter target)
+        {
+            int oldHealth = target.Health;
+            target.Heal(HealAmount);
+            _logger.LogHealing(user.Name, target.Name, HealAmount, oldHealth, target.Health);
+        }
+    }
+
+    public class DamagePotion : IUsable
+    {
+        private readonly IDamageLogger _logger;
+        public int DamageAmount { get; }
+
+        public DamagePotion(int damageAmount, IDamageLogger logger)
+        {
+            DamageAmount = damageAmount;
+            _logger = logger;
+        }
+
+        public void Use(ICharacter user, ICharacter target)
+        {
+            int oldHealth = target.Health;
+            target.TakeDamage(DamageAmount);
+            _logger.LogDamage(user.Name, target.Name, DamageAmount, oldHealth, target.Health);
+        }
+    }
+
+    public class ManaPotion : IUsable
+    {
+        private readonly IManaLogger _logger;
+        public int ManaAmount { get; }
+
+        public ManaPotion(int manaAmount, IManaLogger logger)
+        {
+            ManaAmount = manaAmount;
+            _logger = logger;
+        }
+
+        public void Use(ICharacter user, ICharacter target)
+        {
+            if (target is Mage mage)
+            {
+                int oldMana = mage.Mana;
+                mage.RestoreMana(ManaAmount);
+                _logger.LogManaRestore(user.Name, target.Name, ManaAmount, oldMana, mage.Mana);
+            }
+        }
+    }
+
+    // ===== LOGGING INTERFACES (ISP) =====
+    public interface IHealthLogger
+    {
+        void LogHealing(string user, string target, int amount, int oldHealth, int newHealth);
+    }
+
+    public interface IDamageLogger
+    {
+        void LogDamage(string user, string target, int amount, int oldHealth, int newHealth);
+    }
+
+    public interface IManaLogger
+    {
+        void LogManaRestore(string user, string target, int amount, int oldMana, int newMana);
+    }
+
+    public interface IBattleLogger
+    {
+        void LogBattleStart(BattleEnvironment environment);
+        void LogRoundStart(int round);
+        void LogAttack(string attacker, string target, int damage);
+        void LogSpecialAbility(string user, string target, string abilityName);
+        void LogCharacterUnconscious(string character);
+        void LogBattleEnd(string? winner);
+        void LogItemUse(string user, string item, string? target = null);
+    }
+
+    // ===== FACTORIES (DIP) =====
+    public class CharacterFactory : ICharacterFactory
+    {
+        public ICharacter CreateWarrior(string name, int level = 1) => new Warrior(name, level);
+        public ICharacter CreateMage(string name, int level = 1) => new Mage(name, level);
+        public ICharacter CreateArcher(string name, int level = 1) => new Archer(name, level);
+    }
+
+    public class ItemFactory
+    {
+        private readonly IHealthLogger _healthLogger;
+        private readonly IDamageLogger _damageLogger;
+        private readonly IManaLogger _manaLogger;
+
+        public ItemFactory(IHealthLogger healthLogger, IDamageLogger damageLogger, IManaLogger manaLogger)
+        {
+            _healthLogger = healthLogger;
+            _damageLogger = damageLogger;
+            _manaLogger = manaLogger;
+        }
+
+        public Item CreateHealingPotion(string name, int healAmount) =>
+            new Item(1, name, ItemType.Potion, new HealingPotion(healAmount, _healthLogger));
+
+        public Item CreateDamagePotion(string name, int damageAmount) =>
+            new Item(2, name, ItemType.Potion, new DamagePotion(damageAmount, _damageLogger));
+
+        public Item CreateManaPotion(string name, int manaAmount) =>
+            new Item(3, name, ItemType.Potion, new ManaPotion(manaAmount, _manaLogger));
+    }
+
+    // ===== BATTLE IMPLEMENTATION =====
+    public class ConsoleBattleLogger : IHealthLogger, IDamageLogger, IManaLogger, IBattleLogger
+    {
+        public void LogBattleStart(BattleEnvironment environment) =>
+            Console.WriteLine($"=== БИТВА НАЧИНАЕТСЯ В {environment} ===");
+
+        public void LogRoundStart(int round) =>
+            Console.WriteLine($"\n--- Раунд {round} ---");
+
+        public void LogAttack(string attacker, string target, int damage) =>
+            Console.WriteLine($"{attacker} атакует {target} и наносит {damage} урона!");
+
+        public void LogSpecialAbility(string user, string target, string abilityName) =>
+            Console.WriteLine($"{user} использует {abilityName} на {target}!");
+
+        public void LogCharacterUnconscious(string character) =>
+            Console.WriteLine($"{character} падает без сознания!");
+
+        public void LogBattleEnd(string? winner)
+        {
+            if (winner != null)
+                Console.WriteLine($"\n🎉 ПОБЕДИТЕЛЬ: {winner}!");
+            else
+                Console.WriteLine("\n💀 ВСЕ ПЕРСОНАЖИ ПОГИБЛИ!");
+        }
+
+        public void LogItemUse(string user, string item, string? target = null)
+        {
+            if (target != null)
+                Console.WriteLine($"{user} использует {item} на {target}!");
+            else
+                Console.WriteLine($"{user} использует {item}!");
+        }
+
+        public void LogHealing(string user, string target, int amount, int oldHealth, int newHealth) =>
+            Console.WriteLine($"{user} использует зелье лечения на {target}! +{amount} HP ({oldHealth} → {newHealth})");
+
+        public void LogDamage(string user, string target, int amount, int oldHealth, int newHealth) =>
+            Console.WriteLine($"{user} использует зелье урона на {target}! -{amount} HP ({oldHealth} → {newHealth})");
+
+        public void LogManaRestore(string user, string target, int amount, int oldMana, int newMana) =>
+            Console.WriteLine($"{user} использует зелье маны на {target}! +{amount} маны ({oldMana} → {newMana})");
+    }
+
+    public class Battlefield : IBattlefield
+    {
+        private readonly List<ICharacter> _characters = new();
+        private readonly BattleEnvironment _environment;
+        private readonly IBattleLogger _logger;
+        private readonly Random _random = new();
+
+        public Battlefield(BattleEnvironment environment, IBattleLogger logger)
+        {
+            _environment = environment;
+            _logger = logger;
+        }
+
+        public void AddCharacter(ICharacter character) => _characters.Add(character);
+
+        public ICharacter GetRandomTarget(ICharacter exclude)
+        {
+            var availableTargets = _characters
+                .Where(c => c != exclude && c.Status == CharacterStatus.Alive)
+                .ToList();
+
+            return availableTargets.Count > 0
+                ? availableTargets[_random.Next(availableTargets.Count)]
+                : throw new InvalidBattleStateException();
+        }
+
+        public void StartBattle()
+        {
+            _logger.LogBattleStart(_environment);
+
+            int round = 1;
+            while (_characters.Count(c => c.Status == CharacterStatus.Alive) > 1 && round <= 20)
+            {
+                _logger.LogRoundStart(round);
+
+                foreach (var character in _characters.Where(c => c.Status == CharacterStatus.Alive).ToList())
+                {
+                    ProcessCharacterTurn(character);
+                }
+                round++;
+            }
+
+            var winner = _characters.FirstOrDefault(c => c.Status == CharacterStatus.Alive);
+            _logger.LogBattleEnd(winner?.Name);
+        }
+
+        private void ProcessCharacterTurn(ICharacter character)
+        {
+            try
+            {
+                var combatant = character as ICombatant;
+                var specialAbilityUser = character as ISpecialAbility;
+                var inventoryUser = character as IInventory;
+
+                if (combatant == null) return;
+
+                var target = GetRandomTarget(character);
+                var action = _random.Next(100);
+
+                if (action < 60) // Basic attack
+                {
+                    int damage = combatant.CalculateDamage();
+                    combatant.Attack(target);
+                    _logger.LogAttack(character.Name, target.Name, damage);
+
+                    if (target.Health == 0)
+                    {
+                        _logger.LogCharacterUnconscious(target.Name);
+                    }
+                }
+                else if (action < 85 && specialAbilityUser != null) // Special ability
+                {
+                    if (specialAbilityUser.CanUseSpecialAbility())
+                    {
+                        specialAbilityUser.UseSpecialAbility(target);
+                        _logger.LogSpecialAbility(character.Name, target.Name, "специальную способность");
+
+                        if (target.Health == 0)
+                        {
+                            _logger.LogCharacterUnconscious(target.Name);
+                        }
+                    }
+                    else
+                    {
+                        int damage = combatant.CalculateDamage();
+                        combatant.Attack(target);
+                        _logger.LogAttack(character.Name, target.Name, damage);
+                    }
+                }
+                else if (inventoryUser != null && inventoryUser.Inventory.Any(i => i.Usable != null)) // Use item
+                {
+                    TryUseItem(inventoryUser, target);
+                }
+                else
+                {
+                    int damage = combatant.CalculateDamage();
+                    combatant.Attack(target);
+                    _logger.LogAttack(character.Name, target.Name, damage);
+                }
+            }
+            catch (BattleException ex)
+            {
+                Console.WriteLine($"{character.Name} пропускает ход: {ex.BattleMessage}");
+            }
+        }
+
+        private void TryUseItem(IInventory inventoryUser, ICharacter target)
+        {
+            var usableItems = inventoryUser.Inventory.Where(i => i.Usable != null).ToList();
+            if (usableItems.Any())
+            {
+                var item = usableItems[_random.Next(usableItems.Count)];
+                var useOnSelf = _random.Next(2) == 0;
+                var actualTarget = useOnSelf ? inventoryUser as ICharacter : target;
+
+                _logger.LogItemUse(inventoryUser.ToString()?.Split(' ')[0] ?? "Unknown", item.Name,
+                    useOnSelf ? null : target.Name);
+
+                inventoryUser.UseItem(item, actualTarget);
+            }
+        }
+    }
+
+    // ===== MAIN PROGRAM =====
+    class Program
+    {
+        static void Main()
+        {
+            try
+            {
+                // Dependency injection (DIP)
+                var logger = new ConsoleBattleLogger();
+                var characterFactory = new CharacterFactory();
+                var itemFactory = new ItemFactory(logger, logger, logger);
+                var battlefield = new Battlefield(BattleEnvironment.Forest, logger);
+
+                // Create characters
+                var characters = new[]
+                {
+                    characterFactory.CreateWarrior("Боромир", 3),
+                    characterFactory.CreateMage("Гэндальф", 4),
+                    characterFactory.CreateArcher("Леголас", 3),
+                    characterFactory.CreateWarrior("Арагорн", 2),
+                    characterFactory.CreateMage("Саруман", 3)
+                };
+
+                // Create items
+                var items = new[]
+                {
+                    itemFactory.CreateHealingPotion("Большое зелье лечения", 75),
+                    itemFactory.CreateDamagePotion("Зелье огненного урона", 40),
+                    itemFactory.CreateHealingPotion("Малое зелье лечения", 25),
+                    itemFactory.CreateManaPotion("Зелье маны", 50)
+                };
+
+                // Setup battle
+                var rand = new Random();
+                foreach (var character in characters)
+                {
+                    battlefield.AddCharacter(character);
+
+                    if (character is IInventory inventory)
+                    {
+                        for (int i = 0; i < rand.Next(1, 4); i++)
+                        {
+                            inventory.AddItem(items[rand.Next(items.Length)] with { Id = inventory.Inventory.Count + 1 });
+                        }
+                    }
+                }
+
+                // Display initial state
+                Console.WriteLine("Начальное состояние персонажей:");
+                foreach (var character in characters)
+                {
+                    Console.WriteLine(character);
+                    if (character is IInventory inventory)
+                    {
+                        Console.WriteLine($"  Инвентарь: {string.Join(", ", inventory.Inventory)}");
+                    }
+                }
+
+                Console.WriteLine("\nНажмите Enter для начала битвы...");
+                Console.ReadLine();
+
+                // Start battle
+                battlefield.StartBattle();
+
+                // Demonstrate exception handling
+                DemonstrateExceptions(characterFactory);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Неожиданная ошибка: {ex.Message}");
+            }
+
+            Console.WriteLine("\nНажмите любую клавишу для выхода...");
+            Console.ReadKey();
+        }
+
+        static void DemonstrateExceptions(ICharacterFactory factory)
+        {
+            Console.WriteLine("\n--- Демонстрация исключений ---");
+
+            try
+            {
+                var warrior = factory.CreateWarrior("Тестовый воин");
+                warrior.TakeDamage(200); // Make unconscious
+                ((ICombatant)warrior).Attack(warrior); // Should throw exception
+            }
+            catch (BattleException ex)
+            {
+                Console.WriteLine($"Поймано исключение битвы: {ex.BattleMessage}");
+            }
+
+            try
+            {
+                var mage = factory.CreateMage("Тестовый маг");
+                ((ISpecialAbility)mage).UseSpecialAbility(mage); // Should throw insufficient mana
+            }
+            catch (InsufficientResourceException ex)
+            {
+                Console.WriteLine($"Поймано исключение ресурсов: {ex.BattleMessage}");
+            }
+
+            // Demonstrate unchecked exception
+            try
+            {
+                List<ICharacter>? nullList = null;
+                nullList.Add(factory.CreateWarrior("Test"));
+            }
+            catch (NullReferenceException ex)
+            {
+                Console.WriteLine($"Поймано непроверяемое исключение: {ex.Message}");
+            }
+        }
+    }
+}
