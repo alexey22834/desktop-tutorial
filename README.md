@@ -1,5 +1,17 @@
-# Welcome to GitHub Desktop!
+# Лабораторная работа №1
+## Основы объектно-ориентированного программирования
 
-This is your README. READMEs are where you can communicate what your project is and how to use it.
+**Студент:** Шевырев Алексей Павлович  
+**Группа:** И13-23-11
 
-Write your name on line 6, save it, and then head back to GitHub Desktop.
+### Описание проекта
+Реализация объектной модели магического мира с использованием принципов ООП и SOLID.
+
+### Используемые элементы:
+- Абстрактные классы и методы
+- Интерфейсы
+- Перечисления (enum)
+- Записи (record)
+- Коллекции
+- Исключения
+- Полиморфизм, инкапсуляция, наследование
